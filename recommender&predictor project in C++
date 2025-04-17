@@ -1,0 +1,166 @@
+##Definition of the Problem:
+““Recommender systems help people find items of interest by making personalized recommendations accord-ing to their preferences. For
+example, a recommender system can make personalized recommendations ofitems such as movies, books, hotels, or music to people. In
+order to model users’ preferences their past interactions such as product views, ratings, and purchases are used. In the recommender systems
+areaof research (which is a subfield of machine learning and information retrieval) different algorithms havebeen developed which are
+currently being used by many large companies.In this project you will implement neighborhood based collaborative filtering (NBCF)
+algorithms inorder to make predictions for movie ratings of people.
+””
+
+##Purpose of the Program:
+This program is an individual recommendation system. It finds similarities between people and makes movie
+rate predictions based on these similarities.
+It makes predictions based on the rates given by other similar users for a particular movie that the user has not
+rated before by using “
+neighborhood based collaborative filtering (NBCF) algorithms” .
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <stdexcept> 
+#include <iomanip>    
+
+using namespace std;
+
+using RatingsMap = unordered_map<int, unordered_map<int, double> >;
+
+
+unordered_map<int, double> calculateAverageRatings(const RatingsMap& ratings) {
+    unordered_map<int, double> avgRatings;
+    for (const auto& [userId, userRatings] : ratings) {
+        double sum = 0.0;
+        int count = 0;
+        for (const auto& [movie, rating] : userRatings) {
+            sum += rating;
+            count++;
+        }
+        avgRatings[userId] = sum / count;
+    }
+    return avgRatings;
+}
+
+
+double calculatePearsonCorrelation(const unordered_map<int, double>& user1, const unordered_map<int, double>& user2,
+                                    double avgRating1, double avgRating2) {
+    double sumNum = 0.0, sumDenomA = 0.0, sumDenomB = 0.0;
+    int commonMovies = 0;
+
+    for (const auto& [movie, rating1] : user1) {
+        if (user2.count(movie)) {
+            double normalizedRating1 = rating1 - avgRating1;
+            double normalizedRating2 = user2.at(movie) - avgRating2;
+            sumNum += normalizedRating1 * normalizedRating2;
+            sumDenomA += normalizedRating1 * normalizedRating1;
+            sumDenomB += normalizedRating2 * normalizedRating2;
+            commonMovies++;
+        }
+    }
+
+    if (commonMovies == 0) return 0.0;
+    return sumNum / (sqrt(sumDenomA) * sqrt(sumDenomB));
+}
+
+
+vector<pair<double, int> > findTopKSimilarUsers(int targetUserId, const RatingsMap& ratings, int k, const unordered_map<int, double>& avgRatings) {
+    if (ratings.find(targetUserId) == ratings.end()) {
+        throw invalid_argument("Target user does not exist in the dataset.");
+    }
+
+    vector<pair<double, int> > similarities;
+    for (const auto& [userId, userRatings] : ratings) {
+        if (userId != targetUserId) {
+            double similarity = calculatePearsonCorrelation(ratings.at(targetUserId), userRatings, avgRatings.at(targetUserId), avgRatings.at(userId));
+            similarities.emplace_back(similarity, userId);
+        }
+    }
+
+    sort(similarities.rbegin(), similarities.rend());
+
+    if (similarities.size() > static_cast<size_t>(k)) {
+        similarities.resize(k);
+    }
+
+    return similarities;
+}
+
+
+double predictRating(int targetUserId, int targetMovieId, const RatingsMap& ratings, int k = 5, const unordered_map<int, double>& avgRatings = {}) {
+    if (ratings.find(targetUserId) == ratings.end()) {
+        cout << "Target user does not exist in the dataset.\n";
+        return 3.0;
+    }
+
+    const auto& targetUserRatings = ratings.at(targetUserId);
+    if (targetUserRatings.count(targetMovieId)) {
+        return targetUserRatings.at(targetMovieId);
+    }
+
+    auto topKUsers = findTopKSimilarUsers(targetUserId, ratings, k, avgRatings);
+    double weightedSum = 0.0, similaritySum = 0.0;
+    for (const auto& [similarity, user] : topKUsers) {
+        if (ratings.at(user).count(targetMovieId)) {
+            double rating = ratings.at(user).at(targetMovieId) - avgRatings.at(user);
+            weightedSum += similarity * rating;
+            similaritySum += fabs(similarity);
+        }
+    }
+
+    if (similaritySum == 0) {
+        return avgRatings.at(targetUserId);
+    }
+
+    double predictedRating = avgRatings.at(targetUserId) + (weightedSum / similaritySum);
+    predictedRating = min(max(predictedRating, 0.5), 5.0); // Ensure the predicted rating is within valid range
+    return predictedRating;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(0);
+
+    string line;
+    bool isTest = false;
+    vector<pair<int, int> > testPairs;
+    RatingsMap ratings;
+
+    while (getline(cin, line)) {
+        if (line == "train dataset") {
+            isTest = false;
+            continue;
+        } else if (line == "test dataset") {
+            isTest = true;
+            continue;
+        }
+
+        stringstream ss(line);
+        int userId, movieId;
+        double rating;
+
+        if (!isTest) {
+            if (!(ss >> userId >> movieId >> rating)) {
+                cerr << "Skipping invalid line: " << line << "\n";
+                continue;
+            }
+            ratings[userId][movieId] = rating;
+        } else {
+            ss >> userId >> movieId;
+            testPairs.emplace_back(userId, movieId);
+        }
+    }
+
+    unordered_map<int, double> avgRatings = calculateAverageRatings(ratings);
+    int topKNumber = 100;
+
+    for (size_t i = 0; i < testPairs.size(); ++i) {
+        int testUserId = testPairs[i].first;
+        int testMovieId = testPairs[i].second;
+        double predictedRating = predictRating(testUserId, testMovieId, ratings, topKNumber, avgRatings);
+        cout << fixed << setprecision(1) << predictedRating << "\n";
+    }
+
+    return 0;
+}
